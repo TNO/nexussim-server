@@ -1,0 +1,906 @@
+openapi: 3.0.3
+info:
+  contact:
+    email: coen.vanleeuwen@tno.nl
+  description: |-
+    This API offers an interface to the DynAA service. It takes descriptions of application service
+    chains, and provides simulation results on the system performance
+  title: MIRTO DynAA API
+  version: v1
+servers:
+- url: http://myrtus.hesi.energy:5000/dynaa
+paths:
+  /simulation:
+    post:
+      description: "Runs a simulation of the provided MIRTO-DynAA model, and return\
+        \ KPIs"
+      operationId: simulation_post
+      requestBody:
+        content:
+          application/yaml:
+            examples:
+              Helmond traffic use case:
+                $ref: '#/components/examples/traffic-usecase'
+              Traffic camera as control source:
+                $ref: '#/components/examples/control-segments'
+              Myrtus face application:
+                $ref: '#/components/examples/myrtus-face'
+            schema:
+              $ref: '#/components/schemas/service_chain'
+        description: The MIRTO-DynAA model of the application service chain
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Identifier'
+          description: Id for the simulation
+        "400":
+          description: Invalid input
+      security:
+      - apiAuth: []
+      summary: Run a simulation
+      tags:
+      - simulation
+      x-openapi-router-controller: nexussim_server.controllers.simulation_controller
+  /simulation/{simulation_id}:
+    delete:
+      description: Delete a specific simulation
+      operationId: simulation_simulation_id_delete
+      parameters:
+      - description: id of the simulation to delete
+        explode: false
+        in: path
+        name: simulation_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Identifier'
+        style: simple
+      responses:
+        "200":
+          description: Simulation deleted
+        "404":
+          description: Simulation not found
+      security:
+      - apiAuth: []
+      summary: Delete simulation
+      tags:
+      - simulation
+      x-openapi-router-controller: nexussim_server.controllers.simulation_controller
+    get:
+      description: Get the status of an ongoing simulation
+      operationId: simulation_simulation_id_get
+      parameters:
+      - description: id of the simulation to get
+        explode: false
+        in: path
+        name: simulation_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Identifier'
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/simulation_status'
+          description: A tuple of simulation status and pki list
+        "404":
+          description: Simulation not found
+      security:
+      - apiAuth: []
+      summary: Get simulation status
+      tags:
+      - simulation
+      x-openapi-router-controller: nexussim_server.controllers.simulation_controller
+components:
+  examples:
+    traffic-usecase:
+      value:
+        computes:
+        - id: compute_traffic_camera
+          description: Traffic camera acting as the source of the video feed
+          cpus: 1
+          cpu_speed: 800 MHz
+          mem: 256 MB
+        - id: compute_fog_server
+          cpus: 8
+          cpu_speed: 2.5 GHz
+          mem: 64 GB
+        - id: compute_hesi_vm
+          cpus: 8
+          cpu_speed: 2.4 GHz
+          mem: 32 GB
+        - id: compute_crf_cloud
+          cpus: 20
+          cpu_speed: 3 GHz
+          mem: 256 GB
+        - id: compute_mobinet_backoffice
+          cpus: 4
+          cpu_speed: 2.1 GHz
+          mem: 8 GB
+        networks:
+        - id: network_helmond
+          peers:
+          - compute_traffic_camera
+          - compute_fog_server
+          - network_swarco_vpn
+          bandwidth: 10 Gbps
+          latency: 6 ms
+        - id: network_crf
+          peers:
+          - compute_crf_cloud
+          - network_swarco_vpn
+          bandwidth: 10 Gbps
+          latency: 30 ms
+        - id: network_swarco_vpn
+          peers:
+          - network_helmond
+          - network_crf
+          - network_hesi
+          - compute_mobinet_backoffice
+          bandwidth: 1 Gbps
+          latency: 55 ms
+        - id: network_hesi
+          peers:
+          - network_swarco_vpn
+          - network_tno
+          - compute_hesi_vm
+          bandwidth: 10 Gbps
+          latency: 10 ms
+        - id: network_tno
+          peers:
+          - network_hesi
+          - compute_mobinet_backoffice
+          bandwidth: 1 Gbps
+          latency: 17 ms
+        software components:
+        - id: camera_feed
+          segments:
+          - repeat:
+              segments:
+              - id: camera:video_stream
+                emits:
+                  size: 100 kB
+                  when: on_finish
+                  target: detector:receive
+                stops_after:
+                  time: 41.667 ms
+        - id: vehicle_detector
+          base_load:
+            cpu_load: 0.1
+            memory: 124.3 MB
+          segments:
+          - repeat:
+              segments:
+              - id: detector:receive
+                stops_after:
+                  event: true
+                  time: 33.33 ms
+              - id: detector:convert_to_greyscale
+                load:
+                  cpu_load: 0.8
+                  memory: 10 MB
+                stops_after:
+                  cycles: 400
+              - id: detector:apply_mask
+                load:
+                  cpu_load: 1
+                  memory: 60 MB
+                stops_after:
+                  cycles: 12000
+              - id: detector:detecting
+                load:
+                  cpu_load: 2.4
+                  memory: 120 MB
+                stops_after:
+                  cycles: 23000
+                emits:
+                  when: on_finish
+                  size: 256 B
+                  target: localization:receive
+        - id: detection_localization
+          base_load:
+            cpu_load: 0.1
+            memory: 100 MB
+          segments:
+          - repeat:
+              segments:
+              - id: localization:receive
+                stops_after:
+                  event: true
+                  time: 0.2s
+              - id: localization:operate
+                load:
+                  cpu_load: 0.8
+                  memory: 20 kB
+                stops_after:
+                  cycles: 256
+                  time: 20 ms
+                emits:
+                  size: 312 B
+                  when: on_finish
+                  target: tracking:receive
+        - id: tracking
+          base_load:
+            cpu_load: 0.25
+            memory: 4 GB
+          segments:
+          - repeat:
+              segments:
+              - id: tracking:receive
+                stops_after:
+                  event: true
+                  time: 0.2s
+              - id: tracking:extrapolate_existing
+                load:
+                  cpu_load: 4
+                  memory: 1 GB
+                stops_after:
+                  cycles: 1024000
+              - id: tracking:find_neighbor
+                load:
+                  cpu_load: 1
+                  memory: 128 MB
+                stops_after:
+                  cycles: 10000
+              - id: tracking:allocate_best
+                load:
+                  cpu_load: 1
+                  memory: 10 MB
+                stops_after:
+                  cycles: 43210
+                emits:
+                  size: 5 MB
+                  when: on_finish
+                  target:
+                  - analysis:receive
+                  - prediction:receive
+        - id: track_analysis
+          base_load:
+            cpu_load: 0.25
+            memory: 2 GB
+          segments:
+          - repeat:
+              segments:
+              - id: analysis:receive
+                stops_after:
+                  event: true
+              - id: analysis:operate
+                load:
+                  cpu_load: 8
+                  memory: 2 GB
+                stops_after:
+                  cycles: 987654321
+                emits:
+                  size: 5 MB
+                  when: on_finish
+                  target: output:gather
+        - id: prediction
+          base_load:
+            cpu_load: 0.25
+            memory: 2.5 GB
+          segments:
+          - repeat:
+              segments:
+              - id: prediction:receive
+                stops_after:
+                  event: true
+                  time: 0.24s
+              - id: prediction:predict
+                load:
+                  cpu_load: 2
+                  memory: 1 GB
+                stops_after:
+                  cycles: 5555545
+                emits:
+                  size: 5 MB
+                  when: on_finish
+                  target:
+                  - collisions:receive
+                  - redlight:receive
+        - id: collision_detection
+          base_load:
+            cpu_load: 0.01
+            memory: 140 MB
+          segments:
+          - repeat:
+              segments:
+              - id: collisions:receive
+                stops_after:
+                  event: true
+                  time: 0.2s
+              - id: collisions:predict
+                load:
+                  cpu_load: 1
+                  memory: 512 MB
+                stops_after:
+                  cycles: 874521028
+                emits:
+                  size: 100 kB
+                  when: on_finish
+                  target: output:gather
+        - id: redlight_violation_detection
+          base_load:
+            cpu_load: 0.25
+            memory: 35 MB
+          segments:
+          - repeat:
+              segments:
+              - id: redlight:receive
+                stops_after:
+                  event: true
+                  time: 0.67s
+              - id: redlight:predict
+                load:
+                  cpu_load: 0.9
+                  memory: 1 MB
+                stops_after:
+                  cycles: 87542458
+                emits:
+                  size: 100 kB
+                  when: on_finish
+                  target: output:gather
+        - id: kpi_database
+          segments:
+          - id: output:gather
+            stops_after:
+              event: true
+              time: 0.1s
+        allocations:
+          camera_feed: compute_traffic_camera
+          vehicle_detector: compute_traffic_camera
+          detection_localization: compute_fog_server
+          tracking: compute_crf_cloud
+          track_analysis: compute_crf_cloud
+          prediction: compute_hesi_vm
+          collision_detection: compute_hesi_vm
+          redlight_violation_detection: compute_mobinet_backoffice
+          kpi_database: compute_hesi_vm
+    control-segments:
+      value:
+        computes:
+        - id: compute_traffic_camera
+          description: Traffic camera acting as the source of the video feed
+          cpus: 1
+          cpu_speed: 800 MHz
+          mem: 256 MB
+        - id: compute_fog_server
+          cpus: 8
+          cpu_speed: 2.5 GHz
+          mem: 64 GB
+        - id: compute_hesi_vm
+          cpus: 8
+          cpu_speed: 2.4 GHz
+          mem: 32 GB
+        - id: compute_crf_cloud
+          cpus: 20
+          cpu_speed: 3 GHz
+          mem: 256 GB
+        - id: compute_mobinet_backoffice
+          cpus: 4
+          cpu_speed: 2.1 GHz
+          mem: 8 GB
+        software components:
+        - id: test_concurrent
+          segments:
+          - concurrent:
+              segments:
+              - repeat:
+                  n_times: 2
+                  segments:
+                  - id: test_concurrent_1
+                    load:
+                      cpu_load: 1
+                      memory: 1 MB
+                    stops_after:
+                      time: 5s
+                      cycles: 5000000000
+                  - id: test_concurrent_2
+                    load:
+                      cpu_load: 2
+                      memory: 1 MB
+                    stops_after:
+                      time: 15s
+              - choice:
+                  weights:
+                  - 0.5
+                  - 0.5
+                  segments:
+                  - id: test_concurrent_3
+                    load:
+                      cpu_load: 1
+                      memory: 1 MB
+                    stops_after:
+                      time: 20s
+                      cycles: 350000020
+                  - id: test_concurrent_4
+                    load:
+                      cpu_load: 1
+                      memory: 1 MB
+                    stops_after:
+                      time: 40s
+              - id: test_concurrent_5
+                load:
+                  cpu_load: 1
+                  memory: 1 MB
+                stops_after:
+                  cycles: 10000000000
+        - id: test_choice
+          segments:
+          - choice:
+              weights:
+              - 0.35
+              - 0.35
+              - 0.3
+              segments:
+              - repeat:
+                  n_times: 2
+                  segments:
+                  - id: test_choice_1
+                    load:
+                      cpu_load: 1
+                      memory: 1 MB
+                    stops_after:
+                      time: 10s
+                      cycles: 2487623045
+                  - id: test_choice_2
+                    load:
+                      cpu_load: 3
+                      memory: 1 MB
+                    stops_after:
+                      time: 10s
+              - concurrent:
+                  segments:
+                  - id: test_choice_3
+                    load:
+                      cpu_load: 1
+                      memory: 1 MB
+                    stops_after:
+                      time: 12s
+                  - id: test_choice_4
+                    load:
+                      cpu_load: 1
+                      memory: 1 MB
+                    stops_after:
+                      time: 10s
+              - id: test_choice_5
+                load:
+                  cpu_load: 1
+                  memory: 1 MB
+                stops_after:
+                  time: 10s
+        allocations:
+          test_concurrent: compute_fog_server
+          test_choice: compute_hesi_vm
+    myrtus-face:
+      value:
+        computes:
+        - id: hesi_vm
+          cpus: 8
+          cpu_speed: 2.5 GHz
+          mem: 32 GB
+        - id: demo_laptop
+          cpus: 4
+          cpu_speed: 2 GHz
+          mem: 4 GB
+        networks:
+        - id: usernet
+          peers:
+          - hesi_vm
+          - demo_laptop
+          bandwidth: 1 Gbps
+          latency: 89 ms
+        software components:
+        - id: webcam
+          segments:
+          - id: web:active
+            emits:
+              size: 3 MB
+              target: detector:receive
+              when: on_finish
+            stops_after:
+              time: 5 s
+        - id: rendering
+          segments:
+          - id: render:idle
+            stops_after:
+              event: true
+          - id: render:render
+            load:
+              cpu_load: 0.5
+              memory: 5 MB
+            stops_after:
+              cycles: 1000
+              time: 200 ms
+        - id: face_detection
+          segments:
+          - id: detector:receive
+            stops_after:
+              event: true
+          - id: detector:analyse
+            stops_after:
+              cycles: 4000
+              time: 1 s
+            emits:
+              size: 64 B
+              when: on_finish
+  schemas:
+    Identifier:
+      example: 2ec00286-d84c-40fa-8d89-44fc07f0a842
+      format: uuid
+      type: string
+    simulation_status:
+      example:
+        kpis:
+        - "{}"
+        - "{}"
+        status: running
+      properties:
+        status:
+          enum:
+          - running
+          - finished
+          - error
+          - unknown
+          title: status
+          type: string
+        kpis:
+          items:
+            type: object
+          title: kpis
+          type: array
+      title: simulation_status
+      type: object
+    data_size:
+      description: Amount of memory
+      pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) ([GM]i?|k|Ki)?B$"
+      title: data_size
+      type: string
+    duration:
+      description: Absolute time duration
+      pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) [mun]?s$"
+      title: duration
+      type: string
+    throughput:
+      description: Speed of data transmission
+      pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) ([TGMK]i?)?[Bb]ps$"
+      title: throughput
+      type: string
+    frequency:
+      description: Frequency in Herz
+      pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) [TGMk]?Hz$"
+      title: frequency
+      type: string
+    service_chain:
+      additionalProperties: false
+      properties:
+        name:
+          description: The name of the application service chain
+          title: name
+          type: string
+        description:
+          description: A free form field to put a human readable description of this
+            service chain
+          title: description
+          type: string
+        version:
+          description: The version of the application chain
+          title: version
+          type: string
+        computes:
+          items:
+            $ref: '#/components/schemas/compute'
+          minItems: 1
+          title: computes
+          type: array
+        networks:
+          items:
+            $ref: '#/components/schemas/network'
+          minItems: 1
+          title: networks
+          type: array
+        software components:
+          items:
+            $ref: '#/components/schemas/software_component'
+          minItems: 1
+          title: software components
+          type: array
+      title: service_chain
+      type: object
+    compute:
+      additionalProperties: false
+      properties:
+        id:
+          description: The id of the node
+          title: id
+          type: string
+        description:
+          description: A free form field to put a human readable description
+          title: description
+          type: string
+        cpus:
+          description: Number of CPUs in this node
+          minimum: 1
+          title: cpus
+          type: integer
+        cpu_speed:
+          description: Frequency in Herz
+          pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) [TGMk]?Hz$"
+          title: frequency
+          type: string
+        mem:
+          description: Amount of memory
+          pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) ([GM]i?|k|Ki)?B$"
+          title: data_size
+          type: string
+        disk:
+          description: Amount of memory
+          pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) ([GM]i?|k|Ki)?B$"
+          title: data_size
+          type: string
+      required:
+      - id
+      title: compute
+      type: object
+    network:
+      additionalProperties: false
+      properties:
+        id:
+          description: The identifier for this network
+          title: id
+          type: string
+        description:
+          description: A free form field to put a human readable description
+          title: description
+          type: string
+        peers:
+          description: The id of the peers in this link. Should refer to ids of computes
+          items:
+            type: string
+          title: peers
+          type: array
+        bandwidth:
+          description: Speed of data transmission
+          pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) ([TGMK]i?)?[Bb]ps$"
+          title: throughput
+          type: string
+        latency:
+          description: Absolute time duration
+          pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) [mun]?s$"
+          title: duration
+          type: string
+        local:
+          default: false
+          description: |
+            Denotes whether the peers in this link can only access each other, or to a global external network.
+          title: local
+          type: boolean
+      required:
+      - bandwidth
+      - latency
+      - peers
+      title: network
+      type: object
+    software_component:
+      additionalProperties: false
+      properties:
+        id:
+          title: id
+          type: string
+        description:
+          description: A free form field to put a human readable description of the
+            software component
+          title: description
+          type: string
+        base_load:
+          $ref: '#/components/schemas/load'
+        segments:
+          items:
+            $ref: '#/components/schemas/software_component_segments_inner'
+          minItems: 1
+          title: segments
+          type: array
+      required:
+      - id
+      - segments
+      title: software_component
+      type: object
+    load:
+      additionalProperties: false
+      description: "Defines the memory, CPU and/or duration of a task or segment."
+      properties:
+        memory:
+          description: Amount of memory
+          pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) ([GM]i?|k|Ki)?B$"
+          title: data_size
+          type: string
+        cpu_load:
+          title: cpu_load
+          type: number
+        duration:
+          description: Absolute time duration
+          pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) [mun]?s$"
+          title: duration
+          type: string
+      title: load
+      type: object
+    repeat:
+      additionalProperties: false
+      description: Repeat a sequence of segments n times.
+      properties:
+        n_times:
+          default: -1
+          description: The number of times to repeat.  Use -1 for infinite repetitions.
+          title: n_times
+          type: number
+        segments:
+          description: "The segments to repeat. If more than one, a sequence will\
+            \ be used."
+          items:
+            $ref: '#/components/schemas/repeat_segments_inner'
+          minItems: 1
+          title: segments
+          type: array
+      required:
+      - segments
+      title: repeat
+      type: object
+    concurrent:
+      additionalProperties: false
+      description: Run segments concurrently.
+      properties:
+        segments:
+          description: List of segments to run concurrently
+          items:
+            $ref: '#/components/schemas/concurrent_segments_inner'
+          minItems: 1
+          title: segments
+          type: array
+      required:
+      - segments
+      title: concurrent
+      type: object
+    choice:
+      additionalProperties: false
+      description: Choose a segment at random based on a given set of weights.
+      properties:
+        segments:
+          description: List of segments to choose from
+          items:
+            $ref: '#/components/schemas/repeat_segments_inner'
+          minItems: 1
+          title: segments
+          type: array
+        weights:
+          description: List of weights for each segment. Should be same length as
+            segments.
+          items:
+            type: number
+          minItems: 1
+          title: weights
+          type: array
+      required:
+      - segments
+      title: choice
+      type: object
+    segment:
+      additionalProperties: false
+      properties:
+        id:
+          title: id
+          type: string
+        description:
+          description: A free form field to put a human readable description
+          title: description
+          type: string
+        load:
+          $ref: '#/components/schemas/load'
+        emits:
+          $ref: '#/components/schemas/segment_emits'
+        stops_after:
+          $ref: '#/components/schemas/segment_stops_after'
+      required:
+      - id
+      - stops_after
+      title: segment
+      type: object
+    channel:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        description:
+          description: A free form field to put a human readable description
+          type: string
+        peers:
+          description: The ids of the peers in this channel. Should refer to ids of
+            segments
+          items:
+            type: string
+          minItems: 2
+          type: array
+      required:
+      - peers
+      type: object
+    kpi_list:
+      items:
+        type: object
+      title: kpis
+      type: array
+    software_component_segments_inner:
+      oneOf:
+      - $ref: '#/components/schemas/segment'
+      - $ref: '#/components/schemas/repeat'
+      - $ref: '#/components/schemas/concurrent'
+      title: software_component_segments_inner
+    repeat_segments_inner:
+      anyOf:
+      - $ref: '#/components/schemas/segment'
+      - $ref: '#/components/schemas/repeat'
+      - $ref: '#/components/schemas/concurrent'
+      - $ref: '#/components/schemas/choice'
+      title: repeat_segments_inner
+    concurrent_segments_inner:
+      anyOf:
+      - $ref: '#/components/schemas/segment'
+      - $ref: '#/components/schemas/repeat'
+      - $ref: '#/components/schemas/choice'
+      - $ref: '#/components/schemas/concurrent'
+      title: concurrent_segments_inner
+    segment_emits_target:
+      anyOf:
+      - type: string
+      - items:
+          type: string
+        minItems: 1
+        type: array
+      description: |
+        The id of the segment that will receive this data. Either a single string with the segment ID, or an array of multiple IDs must be provided.
+      title: segment_emits_target
+    segment_emits:
+      additionalProperties: false
+      properties:
+        size:
+          description: Amount of memory
+          pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) ([GM]i?|k|Ki)?B$"
+          title: data_size
+          type: string
+        target:
+          $ref: '#/components/schemas/segment_emits_target'
+        when:
+          description: When the emission takes place
+          enum:
+          - on_start
+          - on_finish
+          title: when
+          type: string
+      title: segment_emits
+      type: object
+    segment_stops_after:
+      additionalProperties: false
+      description: |
+        The end conditions of a segment in absolute time, in CPU cycles, or in both. When both elements are given, the sum of both applies. Alternatively an "event" may trigger the end of a segment, which is currently possible by having another segment send data to it.
+      minProperties: 1
+      properties:
+        time:
+          description: Absolute time duration
+          pattern: "^([1-9]\\d{0,9}(\\.\\d{1,3})?|0\\.\\d{1,3}) [mun]?s$"
+          title: duration
+          type: string
+        cycles:
+          title: cycles
+          type: integer
+        event:
+          title: event
+          type: boolean
+      title: segment_stops_after
+      type: object
+  securitySchemes:
+    apiAuth:
+      in: header
+      name: X-API-KEY
+      type: apiKey
+      x-apikeyInfoFunc: nexussim_server.controllers.security_controller.info_from_apiAuth

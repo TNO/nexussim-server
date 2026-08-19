@@ -1,0 +1,8 @@
+[submodule "nexussim"]
+    path = nexussim
+    url = ../nexussim.git
+    branch = release
+[submodule "cDynAA"]
+    path = cDynAA
+    url = https://github.com/TNO/cDynAA.git
+    branch = main

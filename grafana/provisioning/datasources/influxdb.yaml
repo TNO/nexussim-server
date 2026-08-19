@@ -1,0 +1,16 @@
+
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB (Flux)
+    type: influxdb
+    access: proxy
+    isDefault: true
+    url: http://influxdb:8086
+    jsonData:
+      version: Flux          # Use Flux for InfluxDB 2.x
+      organization: TNO
+      defaultBucket: nexussim
+      tlsSkipVerify: true    # set to false if you enable TLS on InfluxDB
+    secureJsonData:
+      token: my-super-secret-token
