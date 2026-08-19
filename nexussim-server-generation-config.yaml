@@ -1,0 +1,17 @@
+generatorName: python-flask
+outputDir: . 
+inputSpec: mirto-dynaa-v1-openapi.yaml
+additionalProperties:
+  packageName: nexussim_server
+  packageVersion: 0.0.1
+  projectName: nexussim_server
+  useOneOfDiscriminatorLookup: "true"
+  generateSourceCodeOnly: false
+  disallowAdditionalPropertiesIfNotPresent: false
+  mapNumberTo: StrictFloat
+nameMappings:
+  _type: underscore_type
+  type_: type_with_underscore
+modelNameMappings:
+  # The OpenAPI spec ApiResponse conflicts with the internal ApiResponse
+  ApiResponse: NexusApiResponse

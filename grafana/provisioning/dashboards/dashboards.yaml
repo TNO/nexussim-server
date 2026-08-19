@@ -1,0 +1,11 @@
+
+apiVersion: 1
+
+providers:
+  - name: 'nexussim-dashboards'
+    orgId: 1
+    folder: 'nexussim'
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards/nexussim
+      foldersFromFilesStructure: false

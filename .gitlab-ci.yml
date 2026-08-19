@@ -1,0 +1,24 @@
+build-job:
+  image: astral/uv:python3.11-bookworm
+  stage: build
+  variables:
+    GIT_SUBMODULE_STRATEGY: normal
+  before_script:
+    - git config --global user.email $GITLAB_USER_EMAIL
+  script:
+    - cd cDynAA && git tag -af "v2.0.0" -m "v2.0.0" && uv pip install --system . && cd ..
+    - cd nexussim && uv pip install --system . && cd ..
+    - uv pip install --system .[testing]
+    - python -m unittest discover -v
+deploy:
+  image: docker:stable
+  stage: deploy
+  when: manual
+  only:
+    - main
+  variables:
+    GIT_SUBMODULE_STRATEGY: normal
+  script:
+    - docker login -u "$DOCKER_REGISTRY_USER" -p "$DOCKER_REGISTRY_PASSWORD" $DOCKER_REGISTRY
+    - docker build . -t $DOCKER_REGISTRY/myrtus/$CI_PROJECT_NAME
+    - docker push $DOCKER_REGISTRY/myrtus/$CI_PROJECT_NAME
